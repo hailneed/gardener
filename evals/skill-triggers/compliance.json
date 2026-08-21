@@ -1,0 +1,17 @@
+{
+  "skill": "compliance",
+  "should_trigger": [
+    "/gardener:compliance",
+    "kurallarım gerçekten uygulanıyor mu?",
+    "does the agent actually follow my CLAUDE.md?",
+    "hangi kurallar ölü ağırlık, hiç işe yaramıyor",
+    "check whether my prohibitions are being violated",
+    "which instructions still earn their place?"
+  ],
+  "should_not_trigger": [
+    "how big is my context?",
+    "what should I cut from CLAUDE.md?",
+    "find the failures that keep recurring",
+    "run the linter on this repo"
+  ]
+}

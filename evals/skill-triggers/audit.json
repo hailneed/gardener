@@ -1,0 +1,17 @@
+{
+  "skill": "audit",
+  "should_trigger": [
+    "/gardener:audit",
+    "bağlamımda ne var, her istekte ne yükleniyor?",
+    "is my CLAUDE.md too long?",
+    "why does the agent keep ignoring my instructions?",
+    "talimat dosyalarımı gözden geçir, import zinciri doğru mu",
+    "how much context do my instruction files cost per request?"
+  ],
+  "should_not_trigger": [
+    "what can I delete from CLAUDE.md?",
+    "are my rules actually being followed?",
+    "lint my skills",
+    "show me what the agent did in that session"
+  ]
+}

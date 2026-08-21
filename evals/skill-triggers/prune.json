@@ -1,0 +1,17 @@
+{
+  "skill": "prune",
+  "should_trigger": [
+    "/gardener:prune",
+    "CLAUDE.md'yi kısaltalım, ne çıkarabilirim?",
+    "what can I remove from my instructions?",
+    "bu talimat dosyası çok şişmiş, temizleyelim",
+    "split my CLAUDE.md into what is always needed and what is not",
+    "help me shrink my agent instructions"
+  ],
+  "should_not_trigger": [
+    "what loads on every request?",
+    "did the agent obey that rule?",
+    "delete this file from the repo",
+    "which of my skills never fire?"
+  ]
+}

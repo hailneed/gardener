@@ -1,0 +1,13 @@
+{
+  "name": "gardener",
+  "displayName": "Gardener",
+  "version": "0.1.0",
+  "description": "Context hygiene for agent instruction files. Resolves CLAUDE.md, AGENTS.md and their imports into one hot-context inventory, prices what loads on every request, flags broken imports, stale references and duplicated instructions, and cross-references rules against the commands really run in local sessions so dead weight and unfollowed rules become visible. No network calls, and it never edits your instruction files.",
+  "author": {
+    "name": "Halil Ataş",
+    "url": "https://github.com/hailneed"
+  },
+  "repository": "https://github.com/hailneed/gardener",
+  "license": "MIT",
+  "keywords": ["claude-md", "agents-md", "context", "instructions", "claude-code", "codex", "gemini-cli", "hygiene", "local-first"]
+}
