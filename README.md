@@ -8,6 +8,8 @@
 >
 > *English summary below.*
 
+**Site:** https://hailneed.github.io/gardener/
+
 Talimat dosyası deponun **en pahalı metnidir**: her satırın bedeli bir kez değil, her
 istekte yeniden ödenir. Ama bakımını kimse yapmaz — büyür, çelişir, olmayan dosyalara atıf
 yapar ve hiç kimse hangi kuralın gerçekten uygulandığını bilmez.
@@ -117,6 +119,7 @@ bağlayabilirsin; çıktı formatı sabittir ve `--selftest` ağ gerektirmez.
 - **Gardener Cloud (ücretli, opsiyonel):** ekip talimat dosyaları için sürekli bütçe takibi,
   kural değişikliğinin davranışa etkisinin öncesi/sonrası karşılaştırması, yeni gelen için
   "bu depoda gerçekten geçerli kurallar" özeti. Plugin ücretsiz kalır.
+  Bekleme listesi: https://hailneed.github.io/gardener/#cloud
 
 Bu depo `agentlens` ailesinin parçası: adaptör katmanı `agent-blackbox` ile paylaşılır,
 kanonik kopya orada durur.
