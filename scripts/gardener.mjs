@@ -32,6 +32,7 @@ import { homedir } from "node:os";
 import { listAllSessions, getAdapter } from "./lib/adapters.mjs";
 import { hotSet, collectDirectives, estimateTokens } from "./lib/context.mjs";
 import { checkFiles, checkDirectives, findDuplicates, checkCompliance, score, selftest, BUDGET } from "./lib/checks.mjs";
+import { renderFindings, severityLabel, levelLabel, normalizeLang, DEFAULT_LANG } from "./lib/i18n.mjs";
 
 // ---------- argümanlar ----------
 const argv = process.argv.slice(2);
@@ -39,21 +40,40 @@ const flag = (n) => argv.includes(n);
 const opt = (n, fb = null) => { const i = argv.indexOf(n); return i > -1 && argv[i + 1] !== undefined ? argv[i + 1] : fb; };
 const list = (v) => (v ? String(v).split(",").map((s) => s.trim()).filter(Boolean) : []);
 
+/**
+ * Tanınan bayraklar. Bilinmeyen bayrak sessizce yutulmaz: CI'da bir yazım hatası
+ * ("--audt") aksi halde exit 0 verip "denetim geçti" gibi görünür — sessiz yeşil,
+ * bu aracın tam olarak uyardığı hata sınıfı.
+ */
+const BOOL_FLAGS = new Set(["--audit", "--compliance", "--prune", "--selftest", "--md", "--help", "-h"]);
+const VALUE_FLAGS = new Set(["--repo", "--agent", "--days", "--limit", "--lang", "--out", "--ignore"]);
+
+function validateArgs() {
+  const unknown = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith("-")) continue;              // değer konumu, atla
+    if (BOOL_FLAGS.has(a)) continue;
+    if (VALUE_FLAGS.has(a)) { i++; continue; }     // kendi değerini tüketir
+    unknown.push(a);
+  }
+  return unknown;
+}
+
 const REPO = opt("--repo", ".");
 const AGENT = opt("--agent", "all");
 const DAYS = parseInt(opt("--days", "0"), 10) || 0;
 const LIMIT = Math.max(1, parseInt(opt("--limit", "40"), 10) || 40);
-const LANG = opt("--lang", "tr") === "en" ? "en" : "tr";
+// Varsayılan İngilizce: araç İngilizce konuşan bir kitleye çıkıyor. Türkçe `--lang tr` ile.
+const LANG = normalizeLang(opt("--lang", DEFAULT_LANG));
 const OUT = opt("--out");
 const IGNORE = list(opt("--ignore"));
 const MD = flag("--md");
 
 const tr = LANG === "tr";
 const t = (a, b) => (tr ? a : b);
-const SEV = { error: t("hata", "error"), warn: t("uyarı", "warn"), info: t("bilgi", "info") };
-const LEVEL = tr
-  ? { kotu: "kötü", orta: "orta", iyi: "iyi", temiz: "temiz" }
-  : { kotu: "poor", orta: "fair", iyi: "good", temiz: "clean" };
+const SEV = { error: severityLabel("error", LANG), warn: severityLabel("warn", LANG), info: severityLabel("info", LANG) };
+const LEVEL = { poor: levelLabel("poor", LANG), fair: levelLabel("fair", LANG), good: levelLabel("good", LANG), clean: levelLabel("clean", LANG) };
 
 // ---------- yardımcılar ----------
 const outDir = () => resolve(homedir(), ".agentlens", "gardener");
@@ -104,11 +124,11 @@ const sourceLine = (hot, directives) =>
 
 function cmdAudit() {
   const { hot, directives } = load();
-  const findings = [
+  const findings = renderFindings([
     ...checkFiles(hot, { ignore: IGNORE }),
     ...checkDirectives(directives, { repo: REPO, ignore: IGNORE }),
     ...findDuplicates(directives, { ignore: IGNORE }),
-  ];
+  ], LANG);
   const s = score(findings);
   const order = { error: 0, warn: 1, info: 2 };
   const sorted = [...findings].sort((a, b) => order[a.severity] - order[b.severity]);
@@ -160,7 +180,7 @@ function cmdAudit() {
 function cmdCompliance() {
   const { hot, directives } = load();
   const { sessions: sess, unreadable } = sessions();
-  const findings = checkCompliance(directives, sess, { ignore: IGNORE });
+  const findings = renderFindings(checkCompliance(directives, sess, { ignore: IGNORE }), LANG);
   const violations = findings.filter((f) => f.check === "prohibition-seen");
   const dead = findings.filter((f) => f.check === "dead-directive");
 
@@ -216,11 +236,11 @@ const ACTION = {
 function cmdPrune() {
   const { hot, directives } = load();
   const { sessions: sess } = sessions();
-  const findings = [
+  const findings = renderFindings([
     ...checkDirectives(directives, { repo: REPO, ignore: IGNORE }),
     ...findDuplicates(directives, { ignore: IGNORE }),
     ...checkCompliance(directives, sess, { ignore: IGNORE }),
-  ];
+  ], LANG);
 
   // Direktif başına topla: bir satır birden çok gerekçeyle işaretlenmiş olabilir.
   const byLine = new Map();
@@ -284,6 +304,18 @@ function cmdPrune() {
 // ---------- giriş ----------
 
 function main() {
+  const unknown = validateArgs();
+  if (unknown.length) {
+    process.stderr.write(
+      `${t("bilinmeyen bayrak", "unknown flag")}: ${unknown.join(", ")}\n\n${usage()}`,
+    );
+    process.exitCode = 2;
+    return;
+  }
+  if (flag("--help") || flag("-h")) {
+    process.stdout.write(usage());
+    return;
+  }
   if (flag("--selftest")) {
     const r = selftest();
     process.stdout.write(`${t("öz-test", "selftest")}: ${r.total - r.fails.length}/${r.total}\n`);
@@ -294,21 +326,30 @@ function main() {
   if (flag("--compliance")) return cmdCompliance();
   if (flag("--prune")) return cmdPrune();
 
-  process.stdout.write([
-    "gardener — talimat dosyalarının bağlam hijyeni",
+  process.stdout.write(usage());
+}
+
+function usage() {
+  return [
+    t("gardener — talimat dosyalarının bağlam hijyeni", "gardener — context hygiene for agent instruction files"),
     "",
-    "  --audit [--repo .]           ne yükleniyor, kaça mal oluyor, nesi bozuk",
-    "  --compliance [--days N]      kurallar uygulanıyor mu, hangileri ölü ağırlık",
-    "  --prune [--repo .]           ne çıkarılabilir — satır satır gerekçesiyle",
-    "  --selftest                   kural öz-testi (ağ/disk yok)",
+    t("  --audit [--repo .]           ne yükleniyor, kaça mal oluyor, nesi bozuk",
+      "  --audit [--repo .]           what loads, what it costs, what is broken"),
+    t("  --compliance [--days N]      kurallar uygulanıyor mu, hangileri ölü ağırlık",
+      "  --compliance [--days N]      are the rules followed, which are dead weight"),
+    t("  --prune [--repo .]           ne çıkarılabilir — satır satır gerekçesiyle",
+      "  --prune [--repo .]           what can go — line by line, with reasons"),
+    t("  --selftest                   kural öz-testi (ağ/disk yok)",
+      "  --selftest                   rule self-test (no network, no disk)"),
     "",
-    "  --agent all|claude-code|codex|gemini-cli · --md · --lang tr|en",
-    "  --out DOSYA · --limit N · --ignore kural1,kural2",
+    "  --agent all|claude-code|codex|gemini-cli · --md · --lang en|tr",
+    t("  --out DOSYA · --limit N · --ignore kural1,kural2",
+      "  --out FILE · --limit N · --ignore check1,check2"),
     "",
     `${t("bütçe", "budget")}: ${BUDGET.fileWarn}/${BUDGET.fileError} ${t("satır/dosya", "lines/file")} · ${BUDGET.totalWarn}/${BUDGET.totalError} ${t("tahmini token", "estimated tokens")}`,
     `${t("çıktı dizini önerisi", "suggested output dir")}: ${outDir()}`,
     "",
-  ].join("\n"));
+  ].join("\n");
 }
 
 main();

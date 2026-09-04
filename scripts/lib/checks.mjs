@@ -8,6 +8,7 @@
  */
 
 import { resolveSubjectPath } from "./context.mjs";
+import { MESSAGE_KEYS, renderFinding } from "./i18n.mjs";
 
 const SEV_WEIGHT = { error: 10, warn: 4, info: 1 };
 
@@ -24,25 +25,19 @@ export function checkFiles(hot, { ignore = [] } = {}) {
     if (f.missing) {
       add({
         check: "broken-import", severity: "error", file: f.file, line: null,
-        detail: `import çözülemedi (derinlik ${f.depth})`,
-        why: "Çözülemeyen import sessizce atlanır; o dosyadaki kuralların yüklendiğini sanırsın.",
-        fix: "Yolu düzelt ya da import satırını kaldır.",
+        vars: { depth: f.depth },
       });
       continue;
     }
     if (f.lines > BUDGET.fileError) {
       add({
         check: "hot-file-oversized", severity: "error", file: f.file, line: null,
-        detail: `${f.lines} satır · ~${f.tokens} tahmini token, her istekte`,
-        why: "Bu boyut her istekte yeniden ödenir ve uzun talimat metninde model adımları atlar.",
-        fix: "Referans niteliğindeki bölümleri talep üzerine okunan bir dosyaya ya da bir skill'e taşı.",
+        vars: { lines: f.lines, tokens: f.tokens },
       });
     } else if (f.lines > BUDGET.fileWarn) {
       add({
         check: "hot-file-large", severity: "warn", file: f.file, line: null,
-        detail: `${f.lines} satır · ~${f.tokens} tahmini token`,
-        why: "Sıcak bağlamdaki her satırın bedeli oturum boyunca tekrarlanır.",
-        fix: "Nadiren gereken bölümleri ayır.",
+        vars: { lines: f.lines, tokens: f.tokens },
       });
     }
   }
@@ -51,16 +46,12 @@ export function checkFiles(hot, { ignore = [] } = {}) {
   if (tot > BUDGET.totalError) {
     add({
       check: "hot-budget-exceeded", severity: "error", file: null, line: null,
-      detail: `${hot.totals.files} dosya · ${hot.totals.lines} satır · ~${tot} tahmini token`,
-      why: "Her istek bu bütçeyle başlıyor; bağlamın önemli kısmı işe başlamadan doluyor.",
-      fix: "En büyük dosyadan başla: hangi bölüm gerçekten her istekte gerekli?",
+      vars: { files: hot.totals.files, lines: hot.totals.lines, tokens: tot },
     });
   } else if (tot > BUDGET.totalWarn) {
     add({
       check: "hot-budget-high", severity: "warn", file: null, line: null,
-      detail: `~${tot} tahmini token, her istekte`,
-      why: "Talimat metni büyüdükçe tek tek kuralların ağırlığı azalır.",
-      fix: "Yeni kural eklerken bir eskisini çıkarmayı alışkanlık edin.",
+      vars: { tokens: tot },
     });
   }
   return out;
@@ -83,9 +74,7 @@ export function checkDirectives(directives, { repo = null, ignore = [] } = {}) {
       if (r && !r.exists) {
         add({
           check: "stale-path", severity: "warn", file: d.file, line: d.line,
-          detail: `\`${s.token}\` bulunamadı`,
-          why: "Var olmayan bir dosyaya yönlendiren kural sessizce hiçbir şey yaptırmaz.",
-          fix: "Yolu güncelle ya da kuralı kaldır.",
+          vars: { token: s.token },
           text: d.text,
         });
       }
@@ -95,9 +84,7 @@ export function checkDirectives(directives, { repo = null, ignore = [] } = {}) {
     if (d.imperative && VAGUE_RE.test(d.text) && !d.subjects.length) {
       add({
         check: "vague-directive", severity: "info", file: d.file, line: d.line,
-        detail: d.text.slice(0, 120),
-        why: "Uygulanıp uygulanmadığı okunarak anlaşılamayan kural, her okuyanda farklı davranış üretir.",
-        fix: "Somut eylemi yaz: neyi, ne zaman, hangi araçla.",
+        vars: { text: d.text.slice(0, 120) },
         text: d.text,
       });
     }
@@ -147,9 +134,7 @@ export function findDuplicates(directives, { threshold = 0.55, ignore = [] } = {
         score: Math.round(score * 100) / 100,
         file: a.d.file, line: a.d.line, text: a.d.text,
         otherFile: b.d.file, otherLine: b.d.line, otherText: b.d.text,
-        detail: `%${Math.round(score * 100)} örtüşme`,
-        why: "Aynı talimatın iki yerde durması okuyanı taramaya alıştırır; biri güncellenip diğeri kalınca da çelişki doğar.",
-        fix: "Birini kaldır, ya da kapsamları gerçekten farklıysa farkı açıkça yaz.",
+        vars: { pct: Math.round(score * 100) },
       });
     }
   }
@@ -234,9 +219,7 @@ export function checkCompliance(directives, sessions, { ignore = [] } = {}) {
       if (d.prohibition && hits.length && !ignore.includes("prohibition-seen")) {
         out.push({
           check: "prohibition-seen", severity: "warn", file: d.file, line: d.line,
-          detail: `\`${s.token}\` yasaklanmış ama ${hits.length} komutta geçiyor`,
-          why: "Yasak yazılmış olmasına rağmen öznesi gerçek komutlarda görünüyor — kural okunmuyor ya da yanlış ifade edilmiş olabilir.",
-          fix: "Örnekleri aç ve gerçekten ihlal mi bak; ihlalse kuralı sertleştir ya da bir hook'a bağla.",
+          vars: { token: s.token, hits: hits.length },
           text: d.text,
           verify: true,
           examples: hits.slice(0, 4).map((h) => ({ cmd: h.cmd.slice(0, 140), project: h.project, ts: h.ts })),
@@ -248,9 +231,7 @@ export function checkCompliance(directives, sessions, { ignore = [] } = {}) {
       if (!d.prohibition && !hits.length && !ignore.includes("dead-directive")) {
         out.push({
           check: "dead-directive", severity: "info", file: d.file, line: d.line,
-          detail: `\`${s.token}\` hiçbir oturumda geçmiyor`,
-          why: "Konusu hiç ortaya çıkmayan kural, her istekte bedeli ödenen ölü ağırlıktır.",
-          fix: "Gerçekten gerekli mi sor; değilse kaldır ya da talep üzerine okunan bir dosyaya taşı.",
+          vars: { token: s.token },
           text: d.text,
           verify: true,
           occurrences: 0,
@@ -261,9 +242,14 @@ export function checkCompliance(directives, sessions, { ignore = [] } = {}) {
   return out;
 }
 
+/**
+ * Puan. `level` anahtarı dilden bağımsızdır (`poor`/`fair`/`good`/`clean`);
+ * görünen etiket `i18n.mjs`'teki `levelLabel()` ile üretilir. Anahtar makine sözleşmesidir:
+ * CI eşiği buna bağlanabilsin diye çeviriyle değişmez.
+ */
 export function score(findings) {
   const raw = findings.reduce((n, f) => n + (SEV_WEIGHT[f.severity] || 0), 0);
-  return { raw, level: raw >= 40 ? "kotu" : raw >= 15 ? "orta" : raw > 0 ? "iyi" : "temiz" };
+  return { raw, level: raw >= 40 ? "poor" : raw >= 15 ? "fair" : raw > 0 ? "good" : "clean" };
 }
 
 // ---------- öz-test (ağ yok, disk yok) ----------
@@ -341,6 +327,32 @@ export function selftest() {
   });
 
   T("puanlama ağırlıklı", () => score([{ severity: "error" }, { severity: "info" }]).raw === 11);
+  T("puan seviyesi dilden bağımsız anahtar döndürür", () =>
+    ["poor", "fair", "good", "clean"].includes(score([{ severity: "error" }]).level));
 
-  return { total: 19, fails };
+  // Dil kapısı: üretilen her check id'si katalogda karşılığı olmalı, yoksa rapor
+  // o bulguda sessizce düzyazısız kalır. Çeviri eksiği testte patlasın, kullanıcıda değil.
+  const EMITTED = [
+    "broken-import", "hot-file-oversized", "hot-file-large", "hot-budget-exceeded",
+    "hot-budget-high", "stale-path", "vague-directive", "duplicate-directive",
+    "prohibition-seen", "dead-directive",
+  ];
+  T("her check id'si katalogda var", () => EMITTED.every((c) => MESSAGE_KEYS.includes(c)));
+  T("katalogda fazladan id yok", () => MESSAGE_KEYS.every((c) => EMITTED.includes(c)));
+  T("her mesaj iki dilde de dolu", () =>
+    EMITTED.every((c) => ["en", "tr"].every((L) => {
+      const r = renderFinding({ check: c, vars: { depth: 1, lines: 1, tokens: 1, files: 1, token: "x", hits: 1, pct: 1, text: "t" } }, L);
+      return typeof r.why === "string" && r.why.length > 0
+        && typeof r.fix === "string" && r.fix.length > 0
+        && typeof r.detail === "string" && r.detail.length > 0;
+    })));
+  T("çeviri gerçekten dile göre değişir", () => {
+    const f = { check: "duplicate-directive", vars: { pct: 86 } };
+    return renderFinding(f, "en").fix !== renderFinding(f, "tr").fix
+      && renderFinding(f, "en").detail === "86% overlap";
+  });
+  T("bilinmeyen dil İngilizceye düşer", () =>
+    renderFinding({ check: "stale-path", vars: { token: "x" } }, "de").detail === "`x` not found");
+
+  return { total: 25, fails };
 }

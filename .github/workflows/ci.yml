@@ -1,0 +1,109 @@
+# gardener — kalite kapısı
+#
+# Üç şeyi doğrular:
+#   1. Kural öz-testi geçiyor (ağ yok, disk yok, bağımlılık yok).
+#   2. Araç kendi deposunda gerçekten çalışıyor — üç komut da çıktı üretiyor.
+#   3. Bilinmeyen bayrak sessizce yutulmuyor (exit 2). Sessiz yeşil, bu aracın
+#      uyardığı hata sınıfının ta kendisi; kendi CI'ında olmasına izin verilmez.
+#
+# Desteklenen en düşük Node sürümü README'de 18 diye yazıyor; matris onu doğrular.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["18", "20", "22"]
+    name: node ${{ matrix.node }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Rule self-test
+        run: node scripts/gardener.mjs --selftest
+
+      - name: Self-test must fail loudly, not silently
+        run: |
+          out="$(node scripts/gardener.mjs --selftest)"
+          echo "$out"
+          case "$out" in
+            *"/"*) ;;
+            *) echo "self-test printed no ratio"; exit 1 ;;
+          esac
+          # Geçmeyen test varsa exit 1 gelmeli; buraya gelindiyse zaten 0.
+          echo "$out" | grep -Eq '^selftest: ([0-9]+)/\1$' || { echo "not all self-tests passed"; exit 1; }
+
+      - name: Audit runs on this repo
+        run: node scripts/gardener.mjs --audit --repo . --md
+
+      - name: Compliance runs
+        run: node scripts/gardener.mjs --compliance --md
+
+      - name: Prune runs
+        run: node scripts/gardener.mjs --prune --repo . --md
+
+      # Bu adımlar fixture'a bakar, depoya değil: fixture kasıtlı bozuktur ve
+      # gerçek bulgu üretir. Depo kökünde talimat dosyası yok — orada 0 bulgu çıkar
+      # ve dil testi bulgu düzyazısını hiç sınamamış olurdu.
+      - name: JSON output is valid and language-neutral
+        run: |
+          node scripts/gardener.mjs --audit --repo evals/fixture-repo --out en.json
+          node scripts/gardener.mjs --audit --repo evals/fixture-repo --lang tr --out tr.json
+          node -e '
+            const a = require("./en.json"), b = require("./tr.json");
+            const bad = (m) => { console.error(m); process.exit(1); };
+            if (a.kind !== "audit") bad("kind missing");
+            if (a.score.level !== b.score.level) bad("score.level must not depend on --lang");
+            if (!["poor","fair","good","clean"].includes(a.score.level)) bad("score.level not a neutral key: " + a.score.level);
+            if (!a.findings.length) bad("fixture produced no findings — it is meant to be broken");
+            if (a.findings.length !== b.findings.length) bad("finding count differs across languages");
+            for (const [x, y] of a.findings.map((f, i) => [f, b.findings[i]])) {
+              if (x.check !== y.check) bad("check id differs across languages");
+              if (JSON.stringify(x.vars) !== JSON.stringify(y.vars)) bad("vars differ across languages");
+              if (!x.why || !x.fix) bad("finding " + x.check + " has no prose");
+              if (x.why === y.why) bad("why is identical across languages — not translated: " + x.check);
+            }
+            const kinds = [...new Set(a.findings.map((f) => f.check))];
+            console.log("json contract ok · findings: " + a.findings.length + " · checks: " + kinds.join(", "));
+          '
+
+      - name: Unknown flag must exit non-zero
+        run: |
+          if node scripts/gardener.mjs --no-such-flag >/dev/null 2>&1; then
+            echo "unknown flag exited 0 — a typo would pass silently in CI"
+            exit 1
+          fi
+          echo "unknown flag correctly rejected"
+
+      - name: Default output carries no Turkish
+        run: |
+          node scripts/gardener.mjs --audit --repo evals/fixture-repo --md > out.md
+          node -e '
+            const fs = require("fs");
+            // Alıntılanan kullanıcı içeriği hariç: araç kendi düzyazısında Türkçe kullanmaz.
+            const own = fs.readFileSync("out.md", "utf8")
+              .split(/\r?\n/)
+              .filter((l) => !/^\s+- /.test(l));
+            const bad = own.filter((l) => /[çğıöşüÇĞİÖŞÜ]/.test(l));
+            if (bad.length) {
+              console.error("Turkish leaked into default (English) output:");
+              bad.forEach((l) => console.error("  " + l));
+              process.exit(1);
+            }
+            console.log("default output is English-only");
+          '

@@ -1,0 +1,46 @@
+{
+  "name": "@hailneed/gardener",
+  "version": "0.1.0",
+  "description": "Context hygiene for agent instruction files. Resolves CLAUDE.md, AGENTS.md and their imports into one hot-context inventory, prices what loads on every request, and flags broken imports, stale references and duplicated instructions. No network calls, no API key, and it never edits your instruction files.",
+  "type": "module",
+  "bin": {
+    "gardener": "scripts/gardener.mjs"
+  },
+  "scripts": {
+    "test": "node scripts/gardener.mjs --selftest"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "scripts",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "claude-md",
+    "agents-md",
+    "claude-code",
+    "codex",
+    "gemini-cli",
+    "context",
+    "instructions",
+    "hygiene",
+    "local-first",
+    "ai-agents"
+  ],
+  "author": {
+    "name": "Halil Ataş",
+    "url": "https://github.com/hailneed"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hailneed/gardener.git"
+  },
+  "homepage": "https://hailneed.github.io/gardener/",
+  "bugs": {
+    "url": "https://github.com/hailneed/gardener/issues"
+  },
+  "license": "MIT"
+}
