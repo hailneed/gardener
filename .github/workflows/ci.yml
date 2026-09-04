@@ -107,3 +107,76 @@ jobs:
             }
             console.log("default output is English-only");
           '
+
+  # Action'ın kendisi de test edilir. Yayınlanmış ama hiç çalıştırılmamış bir
+  # composite action, "var" demekten öte bir şey ifade etmez.
+  action:
+    runs-on: ubuntu-latest
+    name: action
+    steps:
+      - uses: actions/checkout@v5
+
+      # Eşikler kapalı: Action çalışıyor mu, her çıktıyı dolduruyor mu?
+      - name: Action runs and reports
+        id: soft
+        uses: ./
+        with:
+          path: evals/fixture-repo
+          fail-on: never
+
+      - name: Outputs are populated
+        env:
+          SCORE: ${{ steps.soft.outputs.score }}
+          LEVEL: ${{ steps.soft.outputs.level }}
+          TOKENS: ${{ steps.soft.outputs.tokens }}
+          FILES: ${{ steps.soft.outputs.files }}
+          ERRORS: ${{ steps.soft.outputs.errors }}
+          JSON: ${{ steps.soft.outputs.json }}
+        run: |
+          echo "score=$SCORE level=$LEVEL tokens=$TOKENS files=$FILES errors=$ERRORS"
+          test -n "$SCORE" || { echo "score output empty"; exit 1; }
+          test "$TOKENS" -gt 0 || { echo "the fixture has content, so tokens must be > 0"; exit 1; }
+          test "$FILES" -gt 0 || { echo "the fixture has files, so files must be > 0"; exit 1; }
+          test "$ERRORS" -ge 1 || { echo "the fixture has a broken import, so errors must be >= 1"; exit 1; }
+          test -f "$JSON" || { echo "json output does not point at a file"; exit 1; }
+
+      # Severity kapısı: fixture'da kırık import var, kırmalı.
+      - name: Severity gate fails the job when it should
+        id: sev
+        continue-on-error: true
+        uses: ./
+        with:
+          path: evals/fixture-repo
+          fail-on: error
+
+      # Token bütçesi kapısı bağımsız olmalı: severity kapalıyken bile kırmalı.
+      - name: Token budget gate is independent of severity
+        id: budget
+        continue-on-error: true
+        uses: ./
+        with:
+          path: evals/fixture-repo
+          fail-on: never
+          max-tokens: 10
+
+      - name: Both failures were required
+        run: |
+          echo "severity outcome: ${{ steps.sev.outcome }}"
+          echo "budget outcome:   ${{ steps.budget.outcome }}"
+          test "${{ steps.sev.outcome }}" = "failure" || {
+            echo "the fixture has an error finding, but fail-on: error did not fail"
+            exit 1
+          }
+          test "${{ steps.budget.outcome }}" = "failure" || {
+            echo "the fixture is over 10 tokens, but max-tokens did not fail"
+            exit 1
+          }
+          echo "both gates work, and independently"
+
+      # Bir bütçe gerçekten karşılanabiliyorsa kırmamalı.
+      - name: Passes when the budget is met
+        uses: ./
+        with:
+          path: evals/fixture-repo
+          fail-on: never
+          max-tokens: 100000

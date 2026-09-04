@@ -1,0 +1,208 @@
+# gardener — yeniden kullanılabilir GitHub Action
+#
+# Karar defteri madde 2: ücretsiz katman "terminal raporu + GitHub Action".
+#
+# Bu araç için asıl CI değeri `max-tokens`: sıcak bağlam bütçesini bir eşiğe bağlar.
+# Talimat dosyası sessizce büyür ve bedeli her istekte ödenir — PR'ı kıran bir sayı,
+# o büyümeyi görünür kılmanın tek pratik yolu.
+#
+# Tasarım notları:
+#   - Composite action: Docker imajı yok, bağımlılık yok, `npm install` adımı yok.
+#   - Aracı `${{ github.action_path }}` üzerinden çağırır, kullanıcının deposundan değil.
+#   - Üç eşik birbirinden **bağımsız**: önem (`fail-on`), puan (`max-score`) ve
+#     token bütçesi (`max-tokens`). Birini diğerine katlamak birini gizler.
+
+name: gardener
+description: Audit the hot context of agent instruction files — cost per request, broken imports, stale references, duplicated rules.
+author: hailneed
+
+branding:
+  icon: scissors
+  color: green
+
+inputs:
+  path:
+    description: Repository directory to audit. Defaults to the repository root.
+    required: false
+    default: "."
+  fail-on:
+    description: Lowest severity that fails the job — error, warn, info, or never.
+    required: false
+    default: error
+  max-score:
+    description: Fail if score.raw exceeds this. Empty means no score threshold.
+    required: false
+    default: ""
+  max-tokens:
+    description: Fail if the estimated hot-context token total exceeds this. Empty means no budget threshold.
+    required: false
+    default: ""
+  ignore:
+    description: Comma-separated check ids to silence, e.g. "duplicate-directive,dead-directive".
+    required: false
+    default: ""
+  lang:
+    description: Report language for the human-readable prose — en or tr.
+    required: false
+    default: en
+  summary:
+    description: Write the report to the job summary.
+    required: false
+    default: "true"
+
+outputs:
+  score:
+    description: Weighted score (score.raw).
+    value: ${{ steps.audit.outputs.score }}
+  level:
+    description: One of poor, fair, good, clean.
+    value: ${{ steps.audit.outputs.level }}
+  tokens:
+    description: Estimated tokens loaded on every request.
+    value: ${{ steps.audit.outputs.tokens }}
+  lines:
+    description: Total lines of hot context.
+    value: ${{ steps.audit.outputs.lines }}
+  files:
+    description: Number of files in the hot context.
+    value: ${{ steps.audit.outputs.files }}
+  findings:
+    description: Total number of findings.
+    value: ${{ steps.audit.outputs.findings }}
+  errors:
+    description: Number of error-severity findings.
+    value: ${{ steps.audit.outputs.errors }}
+  json:
+    description: Path to the full JSON report.
+    value: ${{ steps.audit.outputs.json }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run gardener
+      id: audit
+      shell: bash
+      env:
+        GD_PATH: ${{ inputs.path }}
+        GD_FAIL_ON: ${{ inputs.fail-on }}
+        GD_MAX_SCORE: ${{ inputs.max-score }}
+        GD_MAX_TOKENS: ${{ inputs.max-tokens }}
+        GD_IGNORE: ${{ inputs.ignore }}
+        GD_LANG: ${{ inputs.lang }}
+        GD_SUMMARY: ${{ inputs.summary }}
+        GD_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+
+        report="$RUNNER_TEMP/gardener.json"
+        args=(--audit --repo "$GD_PATH" --lang "$GD_LANG" --out "$report")
+        if [ -n "$GD_IGNORE" ]; then args+=(--ignore "$GD_IGNORE"); fi
+
+        # Aracın çıkış kodu bulguya değil, çalışıp çalışmadığına bakar.
+        # Eşik kararını aşağıdaki node adımı verir.
+        node "$GD_ACTION_PATH/scripts/gardener.mjs" "${args[@]}"
+
+        export REPORT="$report"
+        node -e '
+          const fs = require("fs");
+          const path = require("path");
+          const j = JSON.parse(fs.readFileSync(process.env.REPORT, "utf8"));
+
+          // Annotation yolu **depo-göreli** olmalı; mutlak yolla GitHub bulguyu
+          // hiçbir satıra iliştirmez, uyarı sessizce kaybolur.
+          const root = process.env.GITHUB_WORKSPACE || process.cwd();
+          const rel = (p) => {
+            if (!p) return null;
+            const r = path.relative(root, p);
+            if (!r || r.startsWith("..") || path.isAbsolute(r)) return null;
+            return r.split(path.sep).join("/");
+          };
+
+          const findings = j.findings || [];
+          const order = { error: 3, warn: 2, info: 1 };
+          const count = (s) => findings.filter((f) => f.severity === s).length;
+          const errors = count("error");
+          const totals = j.totals || {};
+
+          const out = (k, v) => fs.appendFileSync(process.env.GITHUB_OUTPUT, k + "=" + v + "\n");
+          out("score", j.score.raw);
+          out("level", j.score.level);
+          out("tokens", totals.tokens ?? 0);
+          out("lines", totals.lines ?? 0);
+          out("files", totals.files ?? 0);
+          out("findings", findings.length);
+          out("errors", errors);
+          out("json", process.env.REPORT);
+
+          if (process.env.GD_SUMMARY === "true" && process.env.GITHUB_STEP_SUMMARY) {
+            const seen = new Map();
+            for (const f of findings) if (!seen.has(f.check)) seen.set(f.check, f);
+            const rows = [...seen.values()].map(
+              (f) => "| " + f.severity + " | `" + f.check + "` | " + (f.why || "") + " |",
+            );
+            const md = [
+              "## gardener",
+              "",
+              "**" + (totals.files ?? 0) + " files** · " + (totals.lines ?? 0) + " lines · **~" +
+                (totals.tokens ?? 0) + " estimated tokens, every request** · score **" +
+                j.score.raw + "** (" + j.score.level + ")",
+              "",
+              "Token counts are a bytes/4 estimate, not a real tokenizer.",
+              "",
+              ...(rows.length
+                ? ["| Sev | Check | Why it matters |", "|---|---|---|", ...rows]
+                : ["No findings."]),
+              "",
+            ].join("\n");
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+          }
+
+          // Üç bağımsız eşik.
+          const reasons = [];
+
+          const failOn = String(process.env.GD_FAIL_ON || "error").toLowerCase();
+          if (failOn !== "never") {
+            const floor = order[failOn];
+            if (!floor) {
+              console.error("fail-on must be one of: error, warn, info, never (got: " + failOn + ")");
+              process.exit(2);
+            }
+            const hit = findings.filter((f) => (order[f.severity] || 0) >= floor);
+            if (hit.length) reasons.push(hit.length + " finding(s) at or above severity " + failOn);
+          }
+
+          const num = (name, envKey) => {
+            const raw = process.env[envKey];
+            if (raw === undefined || raw === "") return null;
+            const v = Number(raw);
+            if (!Number.isFinite(v)) {
+              console.error(name + " must be a number (got: " + raw + ")");
+              process.exit(2);
+            }
+            return v;
+          };
+
+          const maxScore = num("max-score", "GD_MAX_SCORE");
+          if (maxScore !== null && j.score.raw > maxScore) {
+            reasons.push("score " + j.score.raw + " exceeds max-score " + maxScore);
+          }
+
+          const maxTokens = num("max-tokens", "GD_MAX_TOKENS");
+          if (maxTokens !== null && (totals.tokens ?? 0) > maxTokens) {
+            reasons.push("hot context ~" + totals.tokens + " estimated tokens exceeds max-tokens " + maxTokens);
+          }
+
+          if (reasons.length) {
+            for (const r of reasons) console.error("gardener: " + r);
+            for (const f of findings.filter((x) => x.severity === "error").slice(0, 20)) {
+              const file = rel(f.file);
+              const loc = file ? "file=" + file + (f.line ? ",line=" + f.line : "") : "";
+              console.log("::error " + loc + "::" + f.check + " — " + (f.detail || ""));
+            }
+            process.exit(1);
+          }
+          console.log(
+            "gardener: ~" + (totals.tokens ?? 0) + " estimated tokens, score " + j.score.raw +
+            " (" + j.score.level + "), " + findings.length + " finding(s), thresholds met",
+          );
+        '

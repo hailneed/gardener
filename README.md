@@ -160,6 +160,44 @@ Flags: `--agent all|claude-code|codex|gemini-cli` · `--repo DIR` · `--days N` 
 
 ## In CI
 
+There is a GitHub Action, so you do not have to write the plumbing. The useful one here
+is `max-tokens` — instruction files grow quietly and the cost is paid on every request, so
+a number that fails the PR is the only practical way to keep that visible:
+
+```yaml
+- uses: hailneed/gardener@main
+  with:
+    max-tokens: 4000      # fail if the hot context grows past this
+    fail-on: error        # error | warn | info | never
+```
+
+Error findings appear as **inline annotations** on the offending line, and the report is
+written to the job summary.
+
+| Input | Default | What it does |
+|---|---|---|
+| `path` | `.` | directory to audit |
+| `fail-on` | `error` | lowest severity that fails the job; `never` reports without failing |
+| `max-tokens` | *(none)* | fail if the estimated hot-context total exceeds this |
+| `max-score` | *(none)* | fail if `score.raw` exceeds this |
+| `ignore` | *(none)* | comma-separated check ids to silence |
+| `lang` | `en` | language of the human-readable prose |
+| `summary` | `true` | write the report to the job summary |
+
+The three thresholds are **independent**: a single broken import can arrive with a small
+token total, and a bloated file can carry no findings at all. Outputs: `score` · `level` ·
+`tokens` · `lines` · `files` · `findings` · `errors` · `json`.
+
+```yaml
+- uses: hailneed/gardener@main
+  id: hot
+  with:
+    fail-on: never        # report, do not block
+- run: echo "~${{ steps.hot.outputs.tokens }} tokens on every request"
+```
+
+### Or wire it yourself
+
 The JSON output is **language-neutral**: `check`, `severity`, `vars` and `score.level`
 are identical whatever `--lang` you pass, so a threshold never breaks on a translation.
 Only `detail`, `why` and `fix` are localised.
@@ -169,7 +207,7 @@ Only `detail`, `why` and `fix` are localised.
 - run: |
     node -e '
       const a = require("./audit.json");
-      if (a.score.raw > 40) { console.error("hot context budget blown: " + a.score.raw); process.exit(1); }
+      if (a.totals.tokens > 4000) { console.error("hot context: ~" + a.totals.tokens + " tokens"); process.exit(1); }
       const broken = a.findings.filter((f) => f.check === "broken-import");
       if (broken.length) { console.error(broken.length + " broken imports"); process.exit(1); }
     '
